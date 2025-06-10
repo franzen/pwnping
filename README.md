@@ -2,6 +2,8 @@
 
 A real-time network monitoring tool that tracks packet loss and latency to help diagnose internet connectivity issues. I wrote this because my internet has been randomly cutting out, and it's been driving me crazy. Now I finally have proof that the problem isn't on my end – just wish the ISP would take it seriously.
 
+![PwnPing Terminal Screenshot](terminal.png)
+
 ## Features
 
 - **Real-time monitoring** of multiple hosts simultaneously (Gateway, Google DNS, Cloudflare DNS)
