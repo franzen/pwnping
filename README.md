@@ -146,6 +146,8 @@ Use the included web-based analyzer to visualize your logs:
    - Packet loss percentages
    - Network events and outages
 
+![PwnPing Log Analyzer Screenshot](screenshot.png)
+
 The analyzer makes it easy to see patterns like:
 
 - Internet connections failing while local gateway remains stable
