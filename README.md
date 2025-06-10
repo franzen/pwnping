@@ -34,7 +34,7 @@ The tool clearly shows when external connections fail while your local network r
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/pwnping.git
+git clone https://github.com/franzen/pwnping.git
 cd pwnping
 
 # Download dependencies
