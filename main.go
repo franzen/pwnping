@@ -292,7 +292,21 @@ func updateUI(host *Host) {
 	defer host.mu.RUnlock()
 
 	if len(host.Stats.Latencies) > 0 {
-		host.Graph.Data = host.Stats.Latencies
+		// Calculate the approximate width available for the sparkline
+		// The sparkline takes 50% of terminal width, minus borders and padding
+		termWidth, _ := ui.TerminalDimensions()
+		sparklineWidth := (termWidth / 2) - 4 // Account for borders and padding
+
+		// Only display as many data points as can fit in the available width
+		// Each data point takes approximately 1 character width
+		dataToDisplay := host.Stats.Latencies
+		if len(dataToDisplay) > sparklineWidth && sparklineWidth > 0 {
+			// Show the most recent data points that fit
+			startIdx := len(dataToDisplay) - sparklineWidth
+			dataToDisplay = dataToDisplay[startIdx:]
+		}
+
+		host.Graph.Data = dataToDisplay
 
 		// Update y-axis labels based on current data
 		maxLatency := 0.0
