@@ -1,0 +1,802 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PwnPing Log Analyzer</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+    <style>
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        margin: 0;
+        padding: 20px;
+        background-color: #f5f5f5;
+      }
+      .container {
+        max-width: 1400px;
+        margin: 0 auto;
+      }
+      h1 {
+        color: #333;
+        text-align: center;
+        margin-bottom: 30px;
+      }
+      .upload-section {
+        background: white;
+        padding: 30px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        margin-bottom: 30px;
+      }
+      .file-inputs {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+        margin-bottom: 20px;
+      }
+      .file-input-wrapper {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .file-input-wrapper label {
+        font-weight: 600;
+        color: #555;
+      }
+      input[type="file"] {
+        padding: 10px;
+        border: 2px dashed #ddd;
+        border-radius: 5px;
+        background: #fafafa;
+        cursor: pointer;
+      }
+      input[type="file"]:hover {
+        border-color: #4caf50;
+        background: #f0f8f0;
+      }
+      button {
+        background: #4caf50;
+        color: white;
+        border: none;
+        padding: 12px 30px;
+        font-size: 16px;
+        border-radius: 5px;
+        cursor: pointer;
+        width: 100%;
+        transition: background 0.3s;
+      }
+      button:hover {
+        background: #45a049;
+      }
+      button:disabled {
+        background: #ccc;
+        cursor: not-allowed;
+      }
+      .results {
+        display: none;
+      }
+      .summary {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        margin-bottom: 30px;
+      }
+      .summary h2 {
+        color: #333;
+        margin-bottom: 20px;
+      }
+      .issues-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 20px;
+        margin-bottom: 30px;
+      }
+      .issue-card {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        border-left: 5px solid #ff9800;
+      }
+      .issue-card.critical {
+        border-left-color: #f44336;
+      }
+      .issue-card.warning {
+        border-left-color: #ff9800;
+      }
+      .issue-card.good {
+        border-left-color: #4caf50;
+      }
+      .issue-card h3 {
+        margin: 0 0 10px 0;
+        color: #333;
+      }
+      .issue-card .metric {
+        font-size: 24px;
+        font-weight: bold;
+        margin: 10px 0;
+      }
+      .charts-section {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        margin-bottom: 30px;
+      }
+      .chart-container {
+        position: relative;
+        height: 400px;
+        margin-bottom: 40px;
+      }
+      .events-list {
+        background: white;
+        padding: 20px;
+        border-radius: 10px;
+        box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      }
+      .event {
+        padding: 15px;
+        margin-bottom: 10px;
+        border-radius: 5px;
+        background: #f9f9f9;
+        border-left: 4px solid #ff9800;
+      }
+      .event.outage {
+        border-left-color: #f44336;
+        background: #ffebee;
+      }
+      .event.high-latency {
+        border-left-color: #ff9800;
+        background: #fff8e1;
+      }
+      .event-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 5px;
+      }
+      .event-type {
+        font-weight: bold;
+        color: #666;
+      }
+      .event-duration {
+        color: #888;
+        font-size: 14px;
+      }
+      .loading {
+        text-align: center;
+        padding: 20px;
+        color: #666;
+      }
+      .zoom-instructions {
+        text-align: center;
+        color: #666;
+        font-size: 14px;
+        margin-top: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>PwnPing Log Analyzer</h1>
+
+      <div class="upload-section">
+        <h2>Upload Log Files</h2>
+        <div class="file-inputs">
+          <div class="file-input-wrapper">
+            <label for="file1">Gateway/Router Log</label>
+            <input type="file" id="file1" accept=".log" />
+          </div>
+          <div class="file-input-wrapper">
+            <label for="file2">Google DNS Log (8.8.8.8)</label>
+            <input type="file" id="file2" accept=".log" />
+          </div>
+          <div class="file-input-wrapper">
+            <label for="file3">Cloudflare DNS Log (1.1.1.1)</label>
+            <input type="file" id="file3" accept=".log" />
+          </div>
+        </div>
+        <button onclick="analyzeLogs()">Analyze Logs</button>
+      </div>
+
+      <div class="results" id="results">
+        <div class="loading" id="loading">
+          <p>Analyzing logs...</p>
+        </div>
+
+        <div id="analysisResults" style="display: none">
+          <div class="summary">
+            <h2>Network Health Summary</h2>
+            <div class="issues-grid" id="summaryGrid"></div>
+          </div>
+
+          <div class="charts-section">
+            <h2>Latency Over Time</h2>
+            <div class="chart-container">
+              <canvas id="latencyChart"></canvas>
+            </div>
+            <p class="zoom-instructions">
+              Use mouse wheel to zoom, drag to pan. Double-click to reset zoom.
+            </p>
+          </div>
+
+          <div class="charts-section">
+            <h2>Packet Loss Over Time</h2>
+            <div class="chart-container">
+              <canvas id="packetLossChart"></canvas>
+            </div>
+            <p class="zoom-instructions">
+              Use mouse wheel to zoom, drag to pan. Double-click to reset zoom.
+            </p>
+          </div>
+
+          <div class="events-list">
+            <h2>Network Events</h2>
+            <div id="eventsList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      let latencyChart = null;
+      let packetLossChart = null;
+      let detectedGatewayIP = null;
+
+      function getHostName(ipAddress) {
+        // Known public DNS servers
+        if (ipAddress === "8.8.8.8" || ipAddress === "8.8.4.4")
+          return "Google DNS";
+        if (ipAddress === "1.1.1.1" || ipAddress === "1.0.0.1")
+          return "Cloudflare DNS";
+
+        // Everything else is assumed to be the gateway
+        return "Gateway";
+      }
+
+      function getColorForHost(ipAddress) {
+        if (getHostName(ipAddress) === "Gateway") return "#4CAF50";
+        if (ipAddress === "8.8.8.8" || ipAddress === "8.8.4.4")
+          return "#2196F3";
+        if (ipAddress === "1.1.1.1" || ipAddress === "1.0.0.1")
+          return "#FF9800";
+        return "#9C27B0"; // Purple for other hosts
+      }
+
+      function getBackgroundColorForHost(ipAddress) {
+        if (getHostName(ipAddress) === "Gateway")
+          return "rgba(76, 175, 80, 0.2)";
+        if (ipAddress === "8.8.8.8" || ipAddress === "8.8.4.4")
+          return "rgba(33, 150, 243, 0.2)";
+        if (ipAddress === "1.1.1.1" || ipAddress === "1.0.0.1")
+          return "rgba(255, 152, 0, 0.2)";
+        return "rgba(156, 39, 176, 0.2)"; // Purple for other hosts
+      }
+
+      class PingLogParser {
+        constructor(logContent, ipAddress) {
+          this.ipAddress = ipAddress;
+          this.entries = [];
+          this.parseLog(logContent);
+        }
+
+        parseLog(content) {
+          const lines = content.split("\n");
+          let lastSeq = 0;
+
+          for (const line of lines) {
+            // Parse sent packets
+            const sentMatch = line.match(
+              /\[([^\]]+)\]\s+(\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+)\s+Sent packet\s+(\d+)/,
+            );
+            if (sentMatch) {
+              const seq = parseInt(sentMatch[3]);
+              const timestamp = new Date(
+                sentMatch[2].replace(/(\d{4})\/(\d{2})\/(\d{2})/, "$1-$2-$3"),
+              );
+
+              // Check for packet loss (missing sequence numbers)
+              if (seq > lastSeq + 1) {
+                for (let i = lastSeq + 1; i < seq; i++) {
+                  this.entries.push({
+                    sequence: i,
+                    timestamp: new Date(timestamp.getTime() - (seq - i) * 1000),
+                    sent: true,
+                    received: false,
+                    rtt: null,
+                  });
+                }
+              }
+
+              this.entries.push({
+                sequence: seq,
+                timestamp: timestamp,
+                sent: true,
+                received: false,
+                rtt: null,
+              });
+              lastSeq = seq;
+            }
+
+            // Parse received packets (handles both ms and µs)
+            const receivedMatch = line.match(
+              /\[([^\]]+)\]\s+(\d{4}\/\d{2}\/\d{2}\s+\d{2}:\d{2}:\d{2}\.\d+)\s+Received packet\s+(\d+),\s+RTT=([0-9.]+)(ms|µs)/,
+            );
+            if (receivedMatch) {
+              const seq = parseInt(receivedMatch[3]);
+              let rtt = parseFloat(receivedMatch[4]);
+              const unit = receivedMatch[5];
+
+              // Convert microseconds to milliseconds
+              if (unit === "µs") {
+                rtt = rtt / 1000;
+              }
+
+              const entry = this.entries.find((e) => e.sequence === seq);
+              if (entry) {
+                entry.received = true;
+                entry.rtt = rtt;
+              }
+            }
+          }
+        }
+
+        getStats() {
+          const received = this.entries.filter((e) => e.received);
+          const sent = this.entries.filter((e) => e.sent);
+
+          const rtts = received.map((e) => e.rtt).filter((rtt) => rtt !== null);
+          const avgRtt =
+            rtts.length > 0 ? rtts.reduce((a, b) => a + b, 0) / rtts.length : 0;
+          const maxRtt = rtts.length > 0 ? Math.max(...rtts) : 0;
+          const minRtt = rtts.length > 0 ? Math.min(...rtts) : 0;
+
+          const packetLoss =
+            sent.length > 0
+              ? ((sent.length - received.length) / sent.length) * 100
+              : 0;
+
+          return {
+            ipAddress: this.ipAddress,
+            totalSent: sent.length,
+            totalReceived: received.length,
+            packetLoss: packetLoss,
+            avgRtt: avgRtt,
+            maxRtt: maxRtt,
+            minRtt: minRtt,
+            entries: this.entries,
+          };
+        }
+
+        findEvents(threshold = 100, lossThreshold = 5) {
+          const events = [];
+          let currentEvent = null;
+
+          // Find high latency and packet loss events
+          for (let i = 0; i < this.entries.length; i++) {
+            const entry = this.entries[i];
+
+            // Check for packet loss
+            if (!entry.received && entry.sent) {
+              if (!currentEvent || currentEvent.type !== "outage") {
+                if (currentEvent) {
+                  currentEvent.endTime = this.entries[i - 1].timestamp;
+                  currentEvent.duration =
+                    (currentEvent.endTime - currentEvent.startTime) / 1000;
+                  events.push(currentEvent);
+                }
+                currentEvent = {
+                  type: "outage",
+                  startTime: entry.timestamp,
+                  endTime: null,
+                  duration: 0,
+                  details: [],
+                };
+              }
+              currentEvent.details.push(`Packet ${entry.sequence} lost`);
+            }
+            // Check for high latency
+            else if (entry.rtt && entry.rtt > threshold) {
+              if (!currentEvent || currentEvent.type !== "high-latency") {
+                if (currentEvent) {
+                  currentEvent.endTime = this.entries[i - 1].timestamp;
+                  currentEvent.duration =
+                    (currentEvent.endTime - currentEvent.startTime) / 1000;
+                  events.push(currentEvent);
+                }
+                currentEvent = {
+                  type: "high-latency",
+                  startTime: entry.timestamp,
+                  endTime: null,
+                  duration: 0,
+                  maxLatency: entry.rtt,
+                  details: [],
+                };
+              }
+              currentEvent.maxLatency = Math.max(
+                currentEvent.maxLatency || 0,
+                entry.rtt,
+              );
+              currentEvent.details.push(`RTT: ${entry.rtt.toFixed(2)}ms`);
+            }
+            // Normal operation
+            else if (currentEvent) {
+              currentEvent.endTime = entry.timestamp;
+              currentEvent.duration =
+                (currentEvent.endTime - currentEvent.startTime) / 1000;
+              events.push(currentEvent);
+              currentEvent = null;
+            }
+          }
+
+          // Close any open event
+          if (currentEvent && this.entries.length > 0) {
+            currentEvent.endTime =
+              this.entries[this.entries.length - 1].timestamp;
+            currentEvent.duration =
+              (currentEvent.endTime - currentEvent.startTime) / 1000;
+            events.push(currentEvent);
+          }
+
+          return events;
+        }
+      }
+
+      async function readFile(file) {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => resolve(e.target.result);
+          reader.onerror = reject;
+          reader.readAsText(file);
+        });
+      }
+
+      function getIPFromFilename(filename) {
+        const match = filename.match(/(\d+\.\d+\.\d+\.\d+)/);
+        return match ? match[1] : "Unknown";
+      }
+
+      async function analyzeLogs() {
+        const file1 = document.getElementById("file1").files[0];
+        const file2 = document.getElementById("file2").files[0];
+        const file3 = document.getElementById("file3").files[0];
+
+        if (!file1 && !file2 && !file3) {
+          alert("Please upload at least one log file");
+          return;
+        }
+
+        document.getElementById("results").style.display = "block";
+        document.getElementById("loading").style.display = "block";
+        document.getElementById("analysisResults").style.display = "none";
+
+        const parsers = [];
+
+        if (file1) {
+          const content = await readFile(file1);
+          const ip = getIPFromFilename(file1.name);
+          parsers.push(new PingLogParser(content, ip));
+        }
+
+        if (file2) {
+          const content = await readFile(file2);
+          const ip = getIPFromFilename(file2.name);
+          parsers.push(new PingLogParser(content, ip));
+        }
+
+        if (file3) {
+          const content = await readFile(file3);
+          const ip = getIPFromFilename(file3.name);
+          parsers.push(new PingLogParser(content, ip));
+        }
+
+        displayResults(parsers);
+      }
+
+      function displayResults(parsers) {
+        document.getElementById("loading").style.display = "none";
+        document.getElementById("analysisResults").style.display = "block";
+
+        // Display summary
+        displaySummary(parsers);
+
+        // Display charts
+        displayLatencyChart(parsers);
+        displayPacketLossChart(parsers);
+
+        // Display events
+        displayEvents(parsers);
+      }
+
+      function displaySummary(parsers) {
+        const summaryGrid = document.getElementById("summaryGrid");
+        summaryGrid.innerHTML = "";
+
+        parsers.forEach((parser) => {
+          const stats = parser.getStats();
+          const card = document.createElement("div");
+          card.className = "issue-card";
+
+          // Determine severity
+          if (stats.packetLoss > 10 || stats.avgRtt > 150) {
+            card.classList.add("critical");
+          } else if (stats.packetLoss > 5 || stats.avgRtt > 100) {
+            card.classList.add("warning");
+          } else {
+            card.classList.add("good");
+          }
+
+          const ipName = getHostName(stats.ipAddress);
+
+          card.innerHTML = `
+                    <h3>${ipName} (${stats.ipAddress})</h3>
+                    <div class="metric">${stats.packetLoss.toFixed(1)}% packet loss</div>
+                    <p>Average latency: ${stats.avgRtt.toFixed(2)}ms</p>
+                    <p>Min/Max: ${stats.minRtt.toFixed(2)}ms / ${stats.maxRtt.toFixed(2)}ms</p>
+                    <p>Packets: ${stats.totalReceived}/${stats.totalSent}</p>
+                `;
+
+          summaryGrid.appendChild(card);
+        });
+      }
+
+      function displayLatencyChart(parsers) {
+        const ctx = document.getElementById("latencyChart").getContext("2d");
+
+        if (latencyChart) {
+          latencyChart.destroy();
+        }
+
+        const datasets = parsers.map((parser) => {
+          const stats = parser.getStats();
+          const data = stats.entries
+            .filter((e) => e.received && e.rtt !== null)
+            .map((e) => ({
+              x: e.timestamp,
+              y: e.rtt,
+            }));
+
+          const ipName = getHostName(stats.ipAddress);
+
+          return {
+            label: `${ipName} (${stats.ipAddress})`,
+            data: data,
+            borderColor: getColorForHost(stats.ipAddress),
+            backgroundColor: "transparent",
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.1,
+          };
+        });
+
+        latencyChart = new Chart(ctx, {
+          type: "line",
+          data: { datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+              mode: "index",
+              intersect: false,
+            },
+            plugins: {
+              title: {
+                display: false,
+              },
+              legend: {
+                position: "top",
+              },
+              zoom: {
+                zoom: {
+                  wheel: {
+                    enabled: true,
+                  },
+                  pinch: {
+                    enabled: true,
+                  },
+                  mode: "x",
+                },
+                pan: {
+                  enabled: true,
+                  mode: "x",
+                },
+              },
+            },
+            scales: {
+              x: {
+                type: "time",
+                time: {
+                  displayFormats: {
+                    minute: "HH:mm",
+                    hour: "HH:mm",
+                  },
+                },
+                title: {
+                  display: true,
+                  text: "Time",
+                },
+              },
+              y: {
+                title: {
+                  display: true,
+                  text: "Latency (ms)",
+                },
+                beginAtZero: true,
+              },
+            },
+          },
+        });
+      }
+
+      function displayPacketLossChart(parsers) {
+        const ctx = document.getElementById("packetLossChart").getContext("2d");
+
+        if (packetLossChart) {
+          packetLossChart.destroy();
+        }
+
+        const datasets = parsers.map((parser) => {
+          const stats = parser.getStats();
+          const windowSize = 60; // 60 second windows
+          const windows = [];
+
+          // Calculate packet loss percentage over rolling windows
+          for (let i = 0; i < stats.entries.length; i++) {
+            const windowStart = i;
+            const windowEnd = Math.min(i + windowSize, stats.entries.length);
+
+            const windowEntries = stats.entries.slice(windowStart, windowEnd);
+            const sent = windowEntries.filter((e) => e.sent).length;
+            const received = windowEntries.filter((e) => e.received).length;
+            const loss = sent > 0 ? ((sent - received) / sent) * 100 : 0;
+
+            if (i % 10 === 0 || loss > 0) {
+              // Sample every 10th point or when there's loss
+              windows.push({
+                x: stats.entries[i].timestamp,
+                y: loss,
+              });
+            }
+          }
+
+          const ipName = getHostName(stats.ipAddress);
+
+          return {
+            label: `${ipName} (${stats.ipAddress})`,
+            data: windows,
+            borderColor: getColorForHost(stats.ipAddress),
+            backgroundColor: getBackgroundColorForHost(stats.ipAddress),
+            borderWidth: 2,
+            fill: true,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            tension: 0.4,
+          };
+        });
+
+        packetLossChart = new Chart(ctx, {
+          type: "line",
+          data: { datasets },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            interaction: {
+              mode: "index",
+              intersect: false,
+            },
+            plugins: {
+              title: {
+                display: false,
+              },
+              legend: {
+                position: "top",
+              },
+              zoom: {
+                zoom: {
+                  wheel: {
+                    enabled: true,
+                  },
+                  pinch: {
+                    enabled: true,
+                  },
+                  mode: "x",
+                },
+                pan: {
+                  enabled: true,
+                  mode: "x",
+                },
+              },
+            },
+            scales: {
+              x: {
+                type: "time",
+                time: {
+                  displayFormats: {
+                    minute: "HH:mm",
+                    hour: "HH:mm",
+                  },
+                },
+                title: {
+                  display: true,
+                  text: "Time",
+                },
+              },
+              y: {
+                title: {
+                  display: true,
+                  text: "Packet Loss (%)",
+                },
+                beginAtZero: true,
+                max: 100,
+              },
+            },
+          },
+        });
+      }
+
+      function displayEvents(parsers) {
+        const eventsList = document.getElementById("eventsList");
+        eventsList.innerHTML = "";
+
+        const allEvents = [];
+
+        parsers.forEach((parser) => {
+          const stats = parser.getStats();
+          const events = parser.findEvents();
+
+          const ipName = getHostName(stats.ipAddress);
+
+          events.forEach((event) => {
+            allEvents.push({
+              ...event,
+              ipAddress: stats.ipAddress,
+              ipName: ipName,
+            });
+          });
+        });
+
+        // Sort events by start time
+        allEvents.sort((a, b) => b.startTime - a.startTime);
+
+        if (allEvents.length === 0) {
+          eventsList.innerHTML =
+            '<p style="text-align: center; color: #666;">No significant network events detected</p>';
+          return;
+        }
+
+        allEvents.forEach((event) => {
+          const eventDiv = document.createElement("div");
+          eventDiv.className = `event ${event.type}`;
+
+          const duration =
+            event.duration < 60
+              ? `${event.duration.toFixed(0)}s`
+              : `${(event.duration / 60).toFixed(1)}m`;
+
+          let description = "";
+          if (event.type === "outage") {
+            description = `${event.details.length} packets lost`;
+          } else if (event.type === "high-latency") {
+            description = `Max latency: ${event.maxLatency.toFixed(2)}ms`;
+          }
+
+          eventDiv.innerHTML = `
+                    <div class="event-header">
+                        <span class="event-type">${event.ipName} - ${event.type === "outage" ? "Packet Loss" : "High Latency"}</span>
+                        <span class="event-duration">Duration: ${duration}</span>
+                    </div>
+                    <p>${event.startTime.toLocaleString()} - ${event.endTime.toLocaleString()}</p>
+                    <p>${description}</p>
+                `;
+
+          eventsList.appendChild(eventDiv);
+        });
+      }
+    </script>
+  </body>
+</html>
