@@ -357,6 +357,29 @@ func updateUI(host *Host) {
 		packetLoss = float64(packetsLost) / float64(host.Stats.PacketsSent) * 100
 	}
 
+	// Calculate latency distribution counts
+	distributionText := ""
+	if len(host.Stats.Latencies) > 0 {
+		counts := [4]int{0, 0, 0, 0}
+		for _, lat := range host.Stats.Latencies {
+			switch {
+			case lat < float64(latencyGreatThreshold):
+				counts[0]++
+			case lat < float64(latencyGoodUpperThreshold):
+				counts[1]++
+			case lat < float64(latencyBadUpperThreshold):
+				counts[2]++
+			default:
+				counts[3]++
+			}
+		}
+		distributionText = fmt.Sprintf("\n\nDistribution:\n<%dms: %d\n%d-%dms: %d\n%d-%dms: %d\n>%dms: %d",
+			latencyGreatThreshold, counts[0],
+			latencyGreatThreshold, latencyGoodUpperThreshold, counts[1],
+			latencyGoodUpperThreshold, latencyBadUpperThreshold, counts[2],
+			latencyBadUpperThreshold, counts[3])
+	}
+
 	statsText := fmt.Sprintf(
 		"Packets: %d/%d\n"+
 			"Loss: %.1f%% (%d)\n"+
@@ -364,7 +387,7 @@ func updateUI(host *Host) {
 			"Min: %v\n"+
 			"Avg: %v\n"+
 			"Max: %v\n"+
-			"StdDev: %v",
+			"StdDev: %v%s",
 		host.Stats.PacketsRecv, host.Stats.PacketsSent,
 		packetLoss, packetsLost,
 		host.Stats.LastRTT.Round(time.Millisecond),
@@ -372,6 +395,7 @@ func updateUI(host *Host) {
 		host.Stats.AvgRTT.Round(time.Millisecond),
 		host.Stats.MaxRTT.Round(time.Millisecond),
 		host.Stats.StdDevRTT.Round(time.Millisecond),
+		distributionText,
 	)
 	host.StatsWidget.Text = statsText
 
