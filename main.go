@@ -29,7 +29,7 @@ type Host struct {
 }
 
 type Stats struct {
-	Latencies   []float64
+	Latencies   []float64 // Sliding window for sparkline graph
 	PacketsSent int
 	PacketsRecv int
 	MinRTT      time.Duration
@@ -37,6 +37,14 @@ type Stats struct {
 	AvgRTT      time.Duration
 	StdDevRTT   time.Duration
 	LastRTT     time.Duration
+	// Lifetime statistics
+	LifetimeSum       float64
+	LifetimeCount     int
+	LifetimeMinRTT    time.Duration
+	LifetimeMaxRTT    time.Duration
+	LifetimeSquareSum float64 // For standard deviation calculation
+	// Lifetime distribution counts
+	LifetimeDistribution [4]int // [<15ms, 15-50ms, 50-200ms, >200ms]
 }
 
 const (
@@ -109,7 +117,9 @@ func main() {
 		host := &Host{
 			Address: h.address,
 			Name:    h.name,
-			Stats:   &Stats{},
+			Stats: &Stats{
+				LifetimeMinRTT: time.Duration(math.MaxInt64),
+			},
 		}
 
 		// Create per-host log file with timestamp
@@ -241,10 +251,36 @@ func monitorHost(ctx context.Context, host *Host) {
 
 		rtt := pkt.Rtt
 		host.Stats.LastRTT = rtt
-		host.Stats.Latencies = append(host.Stats.Latencies, float64(rtt.Milliseconds()))
+		rttMs := float64(rtt.Milliseconds())
 
+		// Update sliding window for graph
+		host.Stats.Latencies = append(host.Stats.Latencies, rttMs)
 		if len(host.Stats.Latencies) > maxDataPoints {
 			host.Stats.Latencies = host.Stats.Latencies[1:]
+		}
+
+		// Update lifetime statistics
+		host.Stats.LifetimeSum += rttMs
+		host.Stats.LifetimeSquareSum += rttMs * rttMs
+		host.Stats.LifetimeCount++
+
+		if rtt < host.Stats.LifetimeMinRTT {
+			host.Stats.LifetimeMinRTT = rtt
+		}
+		if rtt > host.Stats.LifetimeMaxRTT {
+			host.Stats.LifetimeMaxRTT = rtt
+		}
+
+		// Update lifetime distribution
+		switch {
+		case rttMs < float64(latencyGreatThreshold):
+			host.Stats.LifetimeDistribution[0]++
+		case rttMs < float64(latencyGoodUpperThreshold):
+			host.Stats.LifetimeDistribution[1]++
+		case rttMs < float64(latencyBadUpperThreshold):
+			host.Stats.LifetimeDistribution[2]++
+		default:
+			host.Stats.LifetimeDistribution[3]++
 		}
 
 		host.Stats.PacketsRecv++
@@ -276,34 +312,33 @@ func monitorHost(ctx context.Context, host *Host) {
 }
 
 func updateStats(stats *Stats) {
-	if len(stats.Latencies) == 0 {
-		return
-	}
+	// Update sliding window stats for graph color
+	if len(stats.Latencies) > 0 {
+		stats.MinRTT = time.Duration(math.MaxInt64)
+		stats.MaxRTT = 0
+		sum := 0.0
 
-	stats.MinRTT = time.Duration(math.MaxInt64)
-	stats.MaxRTT = 0
-	sum := 0.0
-
-	for _, lat := range stats.Latencies {
-		rtt := time.Duration(lat) * time.Millisecond
-		if rtt < stats.MinRTT {
-			stats.MinRTT = rtt
+		for _, lat := range stats.Latencies {
+			rtt := time.Duration(lat) * time.Millisecond
+			if rtt < stats.MinRTT {
+				stats.MinRTT = rtt
+			}
+			if rtt > stats.MaxRTT {
+				stats.MaxRTT = rtt
+			}
+			sum += lat
 		}
-		if rtt > stats.MaxRTT {
-			stats.MaxRTT = rtt
+
+		avg := sum / float64(len(stats.Latencies))
+		stats.AvgRTT = time.Duration(avg) * time.Millisecond
+
+		variance := 0.0
+		for _, lat := range stats.Latencies {
+			variance += math.Pow(lat-avg, 2)
 		}
-		sum += lat
+		stdDev := math.Sqrt(variance / float64(len(stats.Latencies)))
+		stats.StdDevRTT = time.Duration(stdDev) * time.Millisecond
 	}
-
-	avg := sum / float64(len(stats.Latencies))
-	stats.AvgRTT = time.Duration(avg) * time.Millisecond
-
-	variance := 0.0
-	for _, lat := range stats.Latencies {
-		variance += math.Pow(lat-avg, 2)
-	}
-	stdDev := math.Sqrt(variance / float64(len(stats.Latencies)))
-	stats.StdDevRTT = time.Duration(stdDev) * time.Millisecond
 }
 
 func updateUI(host *Host) {
@@ -357,27 +392,28 @@ func updateUI(host *Host) {
 		packetLoss = float64(packetsLost) / float64(host.Stats.PacketsSent) * 100
 	}
 
-	// Calculate latency distribution counts
+	// Calculate latency distribution counts from lifetime data
 	distributionText := ""
-	if len(host.Stats.Latencies) > 0 {
-		counts := [4]int{0, 0, 0, 0}
-		for _, lat := range host.Stats.Latencies {
-			switch {
-			case lat < float64(latencyGreatThreshold):
-				counts[0]++
-			case lat < float64(latencyGoodUpperThreshold):
-				counts[1]++
-			case lat < float64(latencyBadUpperThreshold):
-				counts[2]++
-			default:
-				counts[3]++
-			}
-		}
+	if host.Stats.LifetimeCount > 0 {
 		distributionText = fmt.Sprintf("\n\nDistribution:\n<%dms: %d\n%d-%dms: %d\n%d-%dms: %d\n>%dms: %d",
-			latencyGreatThreshold, counts[0],
-			latencyGreatThreshold, latencyGoodUpperThreshold, counts[1],
-			latencyGoodUpperThreshold, latencyBadUpperThreshold, counts[2],
-			latencyBadUpperThreshold, counts[3])
+			latencyGreatThreshold, host.Stats.LifetimeDistribution[0],
+			latencyGreatThreshold, latencyGoodUpperThreshold, host.Stats.LifetimeDistribution[1],
+			latencyGoodUpperThreshold, latencyBadUpperThreshold, host.Stats.LifetimeDistribution[2],
+			latencyBadUpperThreshold, host.Stats.LifetimeDistribution[3])
+	}
+
+	// Calculate lifetime statistics
+	var lifetimeAvg, lifetimeStdDev time.Duration
+	if host.Stats.LifetimeCount > 0 {
+		avgMs := host.Stats.LifetimeSum / float64(host.Stats.LifetimeCount)
+		lifetimeAvg = time.Duration(avgMs) * time.Millisecond
+
+		// Calculate standard deviation using the formula: sqrt(E[X^2] - E[X]^2)
+		meanSquare := host.Stats.LifetimeSquareSum / float64(host.Stats.LifetimeCount)
+		variance := meanSquare - (avgMs * avgMs)
+		if variance > 0 {
+			lifetimeStdDev = time.Duration(math.Sqrt(variance)) * time.Millisecond
+		}
 	}
 
 	statsText := fmt.Sprintf(
@@ -391,10 +427,15 @@ func updateUI(host *Host) {
 		host.Stats.PacketsRecv, host.Stats.PacketsSent,
 		packetLoss, packetsLost,
 		host.Stats.LastRTT.Round(time.Millisecond),
-		host.Stats.MinRTT.Round(time.Millisecond),
-		host.Stats.AvgRTT.Round(time.Millisecond),
-		host.Stats.MaxRTT.Round(time.Millisecond),
-		host.Stats.StdDevRTT.Round(time.Millisecond),
+		func() time.Duration {
+			if host.Stats.LifetimeMinRTT == time.Duration(math.MaxInt64) {
+				return 0
+			}
+			return host.Stats.LifetimeMinRTT.Round(time.Millisecond)
+		}(),
+		lifetimeAvg.Round(time.Millisecond),
+		host.Stats.LifetimeMaxRTT.Round(time.Millisecond),
+		lifetimeStdDev.Round(time.Millisecond),
 		distributionText,
 	)
 	host.StatsWidget.Text = statsText
@@ -409,12 +450,11 @@ func updateUI(host *Host) {
 }
 
 func updateHistogram(host *Host) {
-	if len(host.Stats.Latencies) == 0 {
+	if host.Stats.LifetimeCount == 0 {
 		return
 	}
 
 	// Latency categories: Great (<15ms), Good (15-50ms), Bad (50-200ms), Unusable (200ms+)
-	counts := make([]float64, 4)
 	labels := []string{
 		fmt.Sprintf("<%dms", latencyGreatThreshold),
 		fmt.Sprintf("%d-%d", latencyGreatThreshold, latencyGoodUpperThreshold),
@@ -423,25 +463,12 @@ func updateHistogram(host *Host) {
 	}
 	barColors := []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorRed}
 
-	total := float64(len(host.Stats.Latencies))
-
-	for _, lat := range host.Stats.Latencies {
-		switch {
-		case lat < float64(latencyGreatThreshold):
-			counts[0]++
-		case lat < float64(latencyGoodUpperThreshold):
-			counts[1]++
-		case lat < float64(latencyBadUpperThreshold):
-			counts[2]++
-		default:
-			counts[3]++
-		}
-	}
+	total := float64(host.Stats.LifetimeCount)
 
 	// Convert to percentages and round to 1 decimal place
 	percentages := make([]float64, 4)
-	for i, count := range counts {
-		percentages[i] = math.Round((count/total)*1000) / 10 // Round to 1 decimal
+	for i, count := range host.Stats.LifetimeDistribution {
+		percentages[i] = math.Round((float64(count)/total)*1000) / 10 // Round to 1 decimal
 	}
 
 	host.Histogram.Data = percentages
