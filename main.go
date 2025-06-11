@@ -131,8 +131,8 @@ func main() {
 		host.GraphGroup.Title = fmt.Sprintf("%s (%s)", h.name, h.address)
 
 		host.Histogram = widgets.NewBarChart()
-		host.Histogram.Title = "Latency Distribution"
-		host.Histogram.BarWidth = 10
+		host.Histogram.Title = "Latency Distribution (%)"
+		host.Histogram.BarWidth = 8
 		host.Histogram.LabelStyles = []ui.Style{ui.NewStyle(ui.ColorWhite)}
 		host.Histogram.NumStyles = []ui.Style{ui.NewStyle(ui.ColorWhite)}
 		host.Histogram.BarColors = []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorRed}
@@ -177,9 +177,9 @@ func main() {
 
 	for _, host := range hostMonitors {
 		row := ui.NewRow(hostRowHeight,
-			ui.NewCol(1.0/2, host.GraphGroup),
-			ui.NewCol(1.0/4, host.Histogram),
-			ui.NewCol(1.0/4, host.StatsWidget),
+			ui.NewCol(0.55, host.GraphGroup),
+			ui.NewCol(0.25, host.Histogram),
+			ui.NewCol(0.20, host.StatsWidget),
 		)
 		rows = append(rows, row)
 	}
@@ -357,12 +357,11 @@ func updateUI(host *Host) {
 		host.Stats.MaxRTT.Round(time.Millisecond),
 		host.Stats.StdDevRTT.Round(time.Millisecond),
 	)
-
 	host.StatsWidget.Text = statsText
 
-	if packetLoss > 10 {
+	if packetsLost > 10 {
 		host.StatsWidget.BorderStyle = ui.NewStyle(ui.ColorRed)
-	} else if packetLoss > 0 {
+	} else if packetsLost > 2 {
 		host.StatsWidget.BorderStyle = ui.NewStyle(ui.ColorYellow)
 	} else {
 		host.StatsWidget.BorderStyle = ui.NewStyle(ui.ColorGreen)
@@ -375,24 +374,32 @@ func updateHistogram(host *Host) {
 	}
 
 	// Latency categories: Great (<15ms), Good (15-50ms), Bad (50-200ms), Unusable (200ms+)
-	bins := make([]float64, 4)
-	labels := []string{"Great", "Good", "Bad", "Unusable"}
+	counts := make([]float64, 4)
+	labels := []string{"<15ms", "15-50", "50-200", ">200ms"}
 	barColors := []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorRed}
+
+	total := float64(len(host.Stats.Latencies))
 
 	for _, lat := range host.Stats.Latencies {
 		switch {
 		case lat < 15:
-			bins[0]++
+			counts[0]++
 		case lat < 50:
-			bins[1]++
+			counts[1]++
 		case lat < 200:
-			bins[2]++
+			counts[2]++
 		default:
-			bins[3]++
+			counts[3]++
 		}
 	}
 
-	host.Histogram.Data = bins
+	// Convert to percentages
+	percentages := make([]float64, 4)
+	for i, count := range counts {
+		percentages[i] = (count / total) * 100
+	}
+
+	host.Histogram.Data = percentages
 	host.Histogram.Labels = labels
 	host.Histogram.BarColors = barColors
 }
