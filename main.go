@@ -39,6 +39,21 @@ type Stats struct {
 	LastRTT     time.Duration
 }
 
+const (
+	// Latency thresholds for sparkline color coding (in milliseconds)
+	latencyGoodThreshold    = 50  // Below this is green
+	latencyWarningThreshold = 150 // Below this is yellow, above is red
+
+	// Latency thresholds for histogram categories (in milliseconds)
+	latencyGreatThreshold     = 15  // Below this is "Great"
+	latencyGoodUpperThreshold = 50  // Below this is "Good"
+	latencyBadUpperThreshold  = 200 // Below this is "Bad", above is "Unusable"
+
+	// Packet loss thresholds for border color (in percentage)
+	packetLossWarningThreshold  = 2  // Above this is yellow
+	packetLossCriticalThreshold = 10 // Above this is red
+)
+
 var (
 	hosts = []struct {
 		address string
@@ -320,16 +335,13 @@ func updateUI(host *Host) {
 			}
 		}
 
-		// Set adaptive y-axis labels: 0, middle, max
-		if maxLatency > 0 {
-			host.Graph.MaxVal = maxLatency
-			host.GraphGroup.Title = fmt.Sprintf("%s (%s) - Max: %.0fms", host.Name, host.Address, maxLatency)
-		}
+		host.Graph.MaxVal = maxLatency
+		host.GraphGroup.Title = fmt.Sprintf("%s (%s) - Max: %.0fms", host.Name, host.Address, maxLatency)
 
 		avgLatency := float64(host.Stats.AvgRTT.Milliseconds())
-		if avgLatency < 50 {
+		if avgLatency < latencyGoodThreshold {
 			host.Graph.LineColor = ui.ColorGreen
-		} else if avgLatency < 150 {
+		} else if avgLatency < latencyWarningThreshold {
 			host.Graph.LineColor = ui.ColorYellow
 		} else {
 			host.Graph.LineColor = ui.ColorRed
@@ -363,9 +375,9 @@ func updateUI(host *Host) {
 	)
 	host.StatsWidget.Text = statsText
 
-	if packetsLost > 10 {
+	if packetsLost > packetLossCriticalThreshold {
 		host.StatsWidget.BorderStyle = ui.NewStyle(ui.ColorRed)
-	} else if packetsLost > 2 {
+	} else if packetsLost > packetLossWarningThreshold {
 		host.StatsWidget.BorderStyle = ui.NewStyle(ui.ColorYellow)
 	} else {
 		host.StatsWidget.BorderStyle = ui.NewStyle(ui.ColorGreen)
@@ -379,18 +391,23 @@ func updateHistogram(host *Host) {
 
 	// Latency categories: Great (<15ms), Good (15-50ms), Bad (50-200ms), Unusable (200ms+)
 	counts := make([]float64, 4)
-	labels := []string{"<15ms", "15-50", "50-200", ">200ms"}
+	labels := []string{
+		fmt.Sprintf("<%dms", latencyGreatThreshold),
+		fmt.Sprintf("%d-%d", latencyGreatThreshold, latencyGoodUpperThreshold),
+		fmt.Sprintf("%d-%d", latencyGoodUpperThreshold, latencyBadUpperThreshold),
+		fmt.Sprintf(">%dms", latencyBadUpperThreshold),
+	}
 	barColors := []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorRed}
 
 	total := float64(len(host.Stats.Latencies))
 
 	for _, lat := range host.Stats.Latencies {
 		switch {
-		case lat < 15:
+		case lat < float64(latencyGreatThreshold):
 			counts[0]++
-		case lat < 50:
+		case lat < float64(latencyGoodUpperThreshold):
 			counts[1]++
-		case lat < 200:
+		case lat < float64(latencyBadUpperThreshold):
 			counts[2]++
 		default:
 			counts[3]++
