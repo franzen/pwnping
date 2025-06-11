@@ -199,6 +199,10 @@ func main() {
 			case "<Resize>":
 				payload := e.Payload.(ui.Resize)
 				grid.SetRect(0, 0, payload.Width, payload.Height)
+				// Update all host UIs to adapt to new terminal size
+				for _, host := range hostMonitors {
+					updateUI(host)
+				}
 				ui.Clear()
 				ui.Render(grid)
 			}
@@ -293,9 +297,9 @@ func updateUI(host *Host) {
 
 	if len(host.Stats.Latencies) > 0 {
 		// Calculate the approximate width available for the sparkline
-		// The sparkline takes 50% of terminal width, minus borders and padding
+		// The sparkline takes 55% of terminal width (our new column ratio), minus borders and padding
 		termWidth, _ := ui.TerminalDimensions()
-		sparklineWidth := (termWidth / 2) - 4 // Account for borders and padding
+		sparklineWidth := int(float64(termWidth)*0.55) - 2 // Account for borders and padding
 
 		// Only display as many data points as can fit in the available width
 		// Each data point takes approximately 1 character width
@@ -393,10 +397,10 @@ func updateHistogram(host *Host) {
 		}
 	}
 
-	// Convert to percentages
+	// Convert to percentages and round to 1 decimal place
 	percentages := make([]float64, 4)
 	for i, count := range counts {
-		percentages[i] = (count / total) * 100
+		percentages[i] = math.Round((count/total)*1000) / 10 // Round to 1 decimal
 	}
 
 	host.Histogram.Data = percentages
