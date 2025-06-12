@@ -580,10 +580,12 @@ func monitorHost(ctx context.Context, host *Host) {
 			return
 		}
 
-		// Also check for unreasonably high RTT values (> 30 seconds)
-		if rtt > 30*time.Second {
-			host.Logger.Printf("WARNING: Unreasonably high RTT detected! Packet seq=%d, RTT=%v", pkt.Seq, rtt)
-			// Skip this packet
+		// Check for unreasonably high RTT values
+		// Anything over 3 seconds is likely a timeout that arrived late
+		// and should be treated as a dropped packet
+		if rtt > 3*time.Second {
+			host.Logger.Printf("WARNING: Very high RTT detected (likely a late timeout)! Packet seq=%d, RTT=%v - treating as dropped", pkt.Seq, rtt)
+			// Don't count this as a received packet
 			return
 		}
 
