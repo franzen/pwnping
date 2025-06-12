@@ -169,9 +169,16 @@ func (ui *TerminalUI) DrawGraph(x, y, width, height int, data []float64, title s
 	}
 
 	// Adjust data to fit width
-	displayData := data
-	if len(data) > width-dx {
-		displayData = data[len(data)-(width-dx):]
+	maxDataPoints := width - dx
+	displayData := make([]float64, maxDataPoints)
+
+	// Pad with leading zeros if we don't have enough data yet
+	if len(data) < maxDataPoints {
+		// Copy data to the end of displayData, leaving zeros at the beginning
+		copy(displayData[maxDataPoints-len(data):], data)
+	} else {
+		// Take the most recent data points
+		displayData = data[len(data)-maxDataPoints:]
 	}
 
 	// Generate graph using asciigraph
