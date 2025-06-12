@@ -600,10 +600,17 @@
                     enabled: true,
                   },
                   mode: "x",
+                  onZoomComplete({chart}) {
+                    // This update is needed to handle double-click reset
+                    chart.update('none');
+                  }
                 },
                 pan: {
                   enabled: true,
                   mode: "x",
+                },
+                limits: {
+                  x: {min: 'original', max: 'original'},
                 },
               },
             },
@@ -630,6 +637,11 @@
               },
             },
           },
+        });
+
+        // Add double-click to reset zoom
+        ctx.canvas.addEventListener('dblclick', () => {
+          latencyChart.resetZoom();
         });
       }
 
@@ -705,10 +717,17 @@
                     enabled: true,
                   },
                   mode: "x",
+                  onZoomComplete({chart}) {
+                    // This update is needed to handle double-click reset
+                    chart.update('none');
+                  }
                 },
                 pan: {
                   enabled: true,
                   mode: "x",
+                },
+                limits: {
+                  x: {min: 'original', max: 'original'},
                 },
               },
             },
@@ -736,6 +755,11 @@
               },
             },
           },
+        });
+
+        // Add double-click to reset zoom
+        ctx.canvas.addEventListener('dblclick', () => {
+          packetLossChart.resetZoom();
         });
       }
 
