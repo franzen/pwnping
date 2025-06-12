@@ -7,9 +7,10 @@ A real-time network monitoring tool that tracks packet loss and latency to help 
 ## Features
 
 - **Real-time monitoring** of multiple hosts simultaneously (Gateway, Google DNS, Cloudflare DNS)
-- **Visual graphs** showing latency trends over time
+- **Smooth line graphs** showing latency trends over time
 - **Latency distribution histograms** to identify patterns
 - **Packet loss tracking** with immediate visual feedback
+- **WSL2 compatible** with true double buffering for flicker-free display
 - **Detailed logging** for evidence collection and later analysis
 - **Web-based log analyzer** for identifying network events and outages
 - **Configurable router/gateway IP** to work with any network setup
@@ -172,7 +173,8 @@ MIT License
 
 ## Acknowledgments
 
-- Built with [termui](https://github.com/gizak/termui) for the terminal interface
+- Built with [tcell](https://github.com/gdamore/tcell) for terminal manipulation with true double buffering
+- Uses [asciigraph](https://github.com/guptarohit/asciigraph) for beautiful ASCII line graphs
 - Uses [pro-bing](https://github.com/prometheus-community/pro-bing) for ICMP operations
 - Vibe-coded with [claude cli](claude.ai/code)
 - Inspired by countless hours of internet outages and ISP support calls
