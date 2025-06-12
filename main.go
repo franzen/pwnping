@@ -250,6 +250,21 @@ func monitorHost(ctx context.Context, host *Host) {
 		defer host.mu.Unlock()
 
 		rtt := pkt.Rtt
+
+		// Validate RTT - check for negative values
+		if rtt < 0 {
+			host.Logger.Printf("WARNING: Negative RTT detected! Packet seq=%d, RTT=%v", pkt.Seq, rtt)
+			// Skip this packet to avoid corrupting statistics
+			return
+		}
+
+		// Also check for unreasonably high RTT values (> 30 seconds)
+		if rtt > 30*time.Second {
+			host.Logger.Printf("WARNING: Unreasonably high RTT detected! Packet seq=%d, RTT=%v", pkt.Seq, rtt)
+			// Skip this packet
+			return
+		}
+
 		host.Stats.LastRTT = rtt
 		rttMs := float64(rtt.Milliseconds())
 
@@ -285,7 +300,7 @@ func monitorHost(ctx context.Context, host *Host) {
 
 		host.Stats.PacketsRecv++
 		updateStats(host.Stats)
-		host.Logger.Printf("Received packet %d, RTT=%v", host.Stats.PacketsRecv, rtt)
+		host.Logger.Printf("Received packet seq=%d, RTT=%v", pkt.Seq, rtt)
 	}
 
 	host.Pinger.OnSend = func(pkt *probing.Packet) {
@@ -293,11 +308,11 @@ func monitorHost(ctx context.Context, host *Host) {
 		host.Stats.PacketsSent++
 		sent := host.Stats.PacketsSent
 		host.mu.Unlock()
-		host.Logger.Printf("Sent packet %d", sent)
+		host.Logger.Printf("Sent packet seq=%d (total sent: %d)", pkt.Seq, sent)
 	}
 
 	host.Pinger.OnDuplicateRecv = func(pkt *probing.Packet) {
-		host.Logger.Printf("Duplicate packet received")
+		host.Logger.Printf("Duplicate packet received: seq=%d, RTT=%v", pkt.Seq, pkt.Rtt)
 	}
 
 	host.Pinger.OnFinish = func(stats *probing.Statistics) {
