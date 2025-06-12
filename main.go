@@ -7,25 +7,22 @@ import (
 	"log"
 	"math"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
-	ui "github.com/gizak/termui/v3"
-	"github.com/gizak/termui/v3/widgets"
+	"github.com/gdamore/tcell/v2"
+	"github.com/guptarohit/asciigraph"
 	probing "github.com/prometheus-community/pro-bing"
 )
 
 type Host struct {
-	Address     string
-	Name        string
-	Pinger      *probing.Pinger
-	Stats       *Stats
-	Graph       *widgets.Sparkline
-	GraphGroup  *widgets.SparklineGroup
-	Histogram   *widgets.BarChart
-	StatsWidget *widgets.Paragraph
-	Logger      *log.Logger
-	mu          sync.RWMutex
+	Address string
+	Name    string
+	Pinger  *probing.Pinger
+	Stats   *Stats
+	Logger  *log.Logger
+	mu      sync.RWMutex
 }
 
 type Stats struct {
@@ -72,8 +69,281 @@ var (
 		{"1.1.1.1", "Cloudflare DNS"},
 	}
 	maxDataPoints = 100
-	histogramBins = 10
 )
+
+// Terminal UI using tcell
+type TerminalUI struct {
+	screen tcell.Screen
+	width  int
+	height int
+}
+
+func NewTerminalUI() (*TerminalUI, error) {
+	screen, err := tcell.NewScreen()
+	if err != nil {
+		return nil, err
+	}
+
+	if err := screen.Init(); err != nil {
+		return nil, err
+	}
+
+	w, h := screen.Size()
+	return &TerminalUI{
+		screen: screen,
+		width:  w,
+		height: h,
+	}, nil
+}
+
+func (ui *TerminalUI) Close() {
+	ui.screen.Fini()
+}
+
+func (ui *TerminalUI) Clear() {
+	ui.screen.Clear()
+}
+
+func (ui *TerminalUI) DrawText(x, y int, text string, style tcell.Style) {
+	col := x
+	row := y
+	for _, ch := range text {
+		if ch == '\n' {
+			row++
+			col = x
+			continue
+		}
+		if col < ui.width && row < ui.height {
+			ui.screen.SetContent(col, row, ch, nil, style)
+			col++
+		}
+	}
+}
+
+func (ui *TerminalUI) DrawBox(x, y, w, h int, title string, borderStyle tcell.Style) {
+	// Draw corners
+	ui.screen.SetContent(x, y, '┌', nil, borderStyle)
+	ui.screen.SetContent(x+w-1, y, '┐', nil, borderStyle)
+	ui.screen.SetContent(x, y+h-1, '└', nil, borderStyle)
+	ui.screen.SetContent(x+w-1, y+h-1, '┘', nil, borderStyle)
+
+	// Draw horizontal lines
+	for i := 1; i < w-1; i++ {
+		ui.screen.SetContent(x+i, y, '─', nil, borderStyle)
+		ui.screen.SetContent(x+i, y+h-1, '─', nil, borderStyle)
+	}
+
+	// Draw vertical lines
+	for i := 1; i < h-1; i++ {
+		ui.screen.SetContent(x, y+i, '│', nil, borderStyle)
+		ui.screen.SetContent(x+w-1, y+i, '│', nil, borderStyle)
+	}
+
+	// Draw title
+	if title != "" {
+		titleText := fmt.Sprintf(" %s ", title)
+		titleStart := x + (w-len(titleText))/2
+		ui.DrawText(titleStart, y, titleText, borderStyle.Bold(true))
+	}
+}
+
+func (ui *TerminalUI) DrawGraph(x, y, width, height int, data []float64, title string, avgLatency float64) {
+	// Determine border color based on average latency
+	borderStyle := tcell.StyleDefault.Foreground(tcell.ColorGreen)
+	if avgLatency >= latencyWarningThreshold {
+		borderStyle = tcell.StyleDefault.Foreground(tcell.ColorRed)
+	} else if avgLatency >= latencyGoodThreshold {
+		borderStyle = tcell.StyleDefault.Foreground(tcell.ColorYellow)
+	}
+
+	// Draw box around graph
+	ui.DrawBox(x, y, width, height, title, borderStyle)
+
+	if len(data) == 0 {
+		return
+	}
+
+	// Adjust data to fit width
+	displayData := data
+	if len(data) > width-2 {
+		displayData = data[len(data)-(width-2):]
+	}
+
+	// Generate graph using asciigraph
+	graph := asciigraph.Plot(displayData,
+		asciigraph.Height(height-2), // Account for box borders
+		asciigraph.Width(width-8),
+		asciigraph.LowerBound(0), // Always start y-axis from 0
+	)
+
+	// Draw graph inside box
+	lines := strings.Split(graph, "\n")
+	graphStyle := tcell.StyleDefault.Foreground(tcell.ColorGreen)
+	if avgLatency >= latencyWarningThreshold {
+		graphStyle = tcell.StyleDefault.Foreground(tcell.ColorRed)
+	} else if avgLatency >= latencyGoodThreshold {
+		graphStyle = tcell.StyleDefault.Foreground(tcell.ColorYellow)
+	}
+
+	for i, line := range lines {
+		if i < height-2 && y+1+i < ui.height {
+			ui.DrawText(x+1, y+1+i, line, graphStyle)
+		}
+	}
+}
+
+func (ui *TerminalUI) DrawBarChart(x, y, width, height int, data []float64, labels []string, title string) {
+	// Draw box
+	ui.DrawBox(x, y, width, height, title, tcell.StyleDefault)
+
+	if len(data) == 0 {
+		return
+	}
+
+	// Calculate bar dimensions
+	barArea := height - 4 // Account for box, labels, and spacing
+	barWidth := (width-2)/len(data) - 1
+	if barWidth < 3 {
+		barWidth = 3
+	}
+
+	// Find max value for scaling
+	maxVal := 0.0
+	for _, v := range data {
+		if v > maxVal {
+			maxVal = v
+		}
+	}
+
+	// Draw bars
+	for i, val := range data {
+		if i >= len(labels) {
+			break
+		}
+
+		barX := x + 1 + i*(barWidth+1)
+		if barX+barWidth > x+width-1 {
+			break
+		}
+
+		// Calculate bar height
+		barHeight := 0
+		if maxVal > 0 {
+			barHeight = int((val / maxVal) * float64(barArea))
+		}
+
+		// Choose color based on category
+		barStyle := tcell.StyleDefault
+		switch i {
+		case 0:
+			barStyle = barStyle.Foreground(tcell.ColorGreen)
+		case 1:
+			barStyle = barStyle.Foreground(tcell.ColorYellow)
+		case 2:
+			barStyle = barStyle.Foreground(tcell.ColorOlive)
+		case 3:
+			barStyle = barStyle.Foreground(tcell.ColorRed)
+		}
+
+		// Draw bar
+		for h := 0; h < barHeight; h++ {
+			barY := y + height - 3 - h
+			for w := 0; w < barWidth; w++ {
+				if barX+w < x+width-1 {
+					ui.screen.SetContent(barX+w, barY, '█', nil, barStyle)
+				}
+			}
+		}
+
+		// Draw percentage
+		pctText := fmt.Sprintf("%.1f%%", val)
+		pctX := barX + (barWidth-len(pctText))/2
+		if pctX > x && pctX+len(pctText) < x+width {
+			ui.DrawText(pctX, y+height-3-barHeight-1, pctText, tcell.StyleDefault)
+		}
+
+		// Draw label
+		labelX := barX + (barWidth-len(labels[i]))/2
+		if labelX > x && labelX+len(labels[i]) < x+width {
+			ui.DrawText(labelX, y+height-2, labels[i], tcell.StyleDefault.Dim(true))
+		}
+	}
+}
+
+func (ui *TerminalUI) DrawStats(x, y, width, height int, host *Host) {
+	host.mu.RLock()
+	defer host.mu.RUnlock()
+
+	// Calculate packet loss
+	packetLoss := 0.0
+	packetsLost := 0
+	if host.Stats.PacketsSent > 0 {
+		packetsLost = host.Stats.PacketsSent - host.Stats.PacketsRecv
+		packetLoss = float64(packetsLost) / float64(host.Stats.PacketsSent) * 100
+	}
+
+	// Determine border color based on packet loss
+	borderStyle := tcell.StyleDefault.Foreground(tcell.ColorGreen)
+	if packetsLost > packetLossCriticalThreshold {
+		borderStyle = tcell.StyleDefault.Foreground(tcell.ColorRed)
+	} else if packetsLost > packetLossWarningThreshold {
+		borderStyle = tcell.StyleDefault.Foreground(tcell.ColorYellow)
+	}
+
+	ui.DrawBox(x, y, width, height, "Statistics", borderStyle)
+
+	// Calculate lifetime statistics
+	var lifetimeAvg, lifetimeStdDev time.Duration
+	if host.Stats.LifetimeCount > 0 {
+		avgMs := host.Stats.LifetimeSum / float64(host.Stats.LifetimeCount)
+		lifetimeAvg = time.Duration(avgMs) * time.Millisecond
+
+		meanSquare := host.Stats.LifetimeSquareSum / float64(host.Stats.LifetimeCount)
+		variance := meanSquare - (avgMs * avgMs)
+		if variance > 0 {
+			lifetimeStdDev = time.Duration(math.Sqrt(variance)) * time.Millisecond
+		}
+	}
+
+	// Draw stats
+	row := y + 1
+	ui.DrawText(x+1, row, fmt.Sprintf("Packets: %d/%d", host.Stats.PacketsRecv, host.Stats.PacketsSent), tcell.StyleDefault)
+	row++
+	ui.DrawText(x+1, row, fmt.Sprintf("Loss: %.1f%% (%d)", packetLoss, packetsLost), tcell.StyleDefault)
+	row++
+	ui.DrawText(x+1, row, fmt.Sprintf("Last: %v", host.Stats.LastRTT.Round(time.Millisecond)), tcell.StyleDefault)
+	row++
+	ui.DrawText(x+1, row, fmt.Sprintf("Min: %v", func() time.Duration {
+		if host.Stats.LifetimeMinRTT == time.Duration(math.MaxInt64) {
+			return 0
+		}
+		return host.Stats.LifetimeMinRTT.Round(time.Millisecond)
+	}()), tcell.StyleDefault)
+	row++
+	ui.DrawText(x+1, row, fmt.Sprintf("Avg: %v", lifetimeAvg.Round(time.Millisecond)), tcell.StyleDefault)
+	row++
+	ui.DrawText(x+1, row, fmt.Sprintf("Max: %v", host.Stats.LifetimeMaxRTT.Round(time.Millisecond)), tcell.StyleDefault)
+	row++
+	ui.DrawText(x+1, row, fmt.Sprintf("StdDev: %v", lifetimeStdDev.Round(time.Millisecond)), tcell.StyleDefault)
+
+	// Draw distribution if we have data
+	if host.Stats.LifetimeCount > 0 && row+6 < y+height-1 {
+		row += 2
+		ui.DrawText(x+1, row, "Distribution:", tcell.StyleDefault.Bold(true))
+		row++
+		ui.DrawText(x+1, row, fmt.Sprintf("<%dms: %d", latencyGreatThreshold, host.Stats.LifetimeDistribution[0]), tcell.StyleDefault)
+		row++
+		ui.DrawText(x+1, row, fmt.Sprintf("%d-%dms: %d", latencyGreatThreshold, latencyGoodUpperThreshold, host.Stats.LifetimeDistribution[1]), tcell.StyleDefault)
+		row++
+		ui.DrawText(x+1, row, fmt.Sprintf("%d-%dms: %d", latencyGoodUpperThreshold, latencyBadUpperThreshold, host.Stats.LifetimeDistribution[2]), tcell.StyleDefault)
+		row++
+		ui.DrawText(x+1, row, fmt.Sprintf(">%dms: %d", latencyBadUpperThreshold, host.Stats.LifetimeDistribution[3]), tcell.StyleDefault)
+	}
+}
+
+func (ui *TerminalUI) Show() {
+	ui.screen.Show()
+}
 
 func main() {
 	// Parse command line flags
@@ -102,8 +372,10 @@ func main() {
 
 	log.Println("Starting pwnping...")
 
-	if err := ui.Init(); err != nil {
-		log.Fatalf("failed to initialize termui: %v", err)
+	// Initialize terminal UI
+	ui, err := NewTerminalUI()
+	if err != nil {
+		log.Fatalf("failed to initialize terminal UI: %v", err)
 	}
 	defer ui.Close()
 
@@ -111,7 +383,6 @@ func main() {
 	defer cancel()
 
 	hostMonitors := make([]*Host, 0)
-	grid := ui.NewGrid()
 
 	for _, h := range hosts {
 		host := &Host{
@@ -148,24 +419,6 @@ func main() {
 		host.Logger.Printf("Created pinger with Count=%d, Interval=%v", pinger.Count, pinger.Interval)
 		host.Pinger = pinger
 
-		host.Graph = widgets.NewSparkline()
-		host.Graph.Title = fmt.Sprintf("%s Latency", h.name)
-		host.Graph.LineColor = ui.ColorGreen
-
-		host.GraphGroup = widgets.NewSparklineGroup(host.Graph)
-		host.GraphGroup.Title = fmt.Sprintf("%s (%s)", h.name, h.address)
-
-		host.Histogram = widgets.NewBarChart()
-		host.Histogram.Title = "Latency Distribution (%)"
-		host.Histogram.BarWidth = 8
-		host.Histogram.LabelStyles = []ui.Style{ui.NewStyle(ui.ColorWhite)}
-		host.Histogram.NumStyles = []ui.Style{ui.NewStyle(ui.ColorWhite)}
-		host.Histogram.BarColors = []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorRed}
-
-		host.StatsWidget = widgets.NewParagraph()
-		host.StatsWidget.Title = "Statistics"
-		host.StatsWidget.TextStyle = ui.NewStyle(ui.ColorWhite)
-
 		hostMonitors = append(hostMonitors, host)
 
 		go monitorHost(ctx, host)
@@ -175,70 +428,125 @@ func main() {
 		log.Fatal("No hosts could be monitored. Please check your network configuration.")
 	}
 
-	termWidth, termHeight := ui.TerminalDimensions()
-	grid.SetRect(0, 0, termWidth, termHeight)
+	// Event handling
+	eventCh := make(chan tcell.Event)
+	go func() {
+		for {
+			eventCh <- ui.screen.PollEvent()
+		}
+	}()
 
-	// Create title widget
-	title := widgets.NewParagraph()
-	startTime := time.Now().Format("2006-01-02 15:04:05")
-	title.Text = fmt.Sprintf(
-		" ____                 ____  _             \n"+
-			"|  _ \\__      ___ __ |  _ \\(_)_ __   __ _ \n"+
-			"| |_) \\ \\ /\\ / / '_ \\| |_) | | '_ \\ / _` |           Pinging local gateway, Google DNS, and Cloudflare DNS.\n"+
-			"|  __/ \\ V  V /| | | |  __/| | | | | (_| |           Started at: %s\n"+
-			"|_|     \\_/\\_/ |_| |_|_|   |_|_| |_|\\__, |\n"+
-			"                                    |___/            Press 'q' to quit.", startTime)
-	title.TextStyle.Fg = ui.ColorCyan
-	title.Border = false
-
-	rows := make([]interface{}, 0)
-
-	// Add title as first row
-	rows = append(rows, ui.NewRow(0.15, ui.NewCol(1.0, title)))
-
-	// Calculate remaining height for host rows
-	remainingHeight := 0.85
-	hostRowHeight := remainingHeight / float64(len(hostMonitors))
-
-	for _, host := range hostMonitors {
-		row := ui.NewRow(hostRowHeight,
-			ui.NewCol(0.55, host.GraphGroup),
-			ui.NewCol(0.25, host.Histogram),
-			ui.NewCol(0.20, host.StatsWidget),
-		)
-		rows = append(rows, row)
-	}
-
-	grid.Set(rows...)
-
-	ticker := time.NewTicker(100 * time.Millisecond)
+	// Update ticker
+	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
-	uiEvents := ui.PollEvents()
+	// Main loop
 	for {
 		select {
-		case e := <-uiEvents:
-			switch e.ID {
-			case "q", "<C-c>":
-				return
-			case "<Resize>":
-				payload := e.Payload.(ui.Resize)
-				grid.SetRect(0, 0, payload.Width, payload.Height)
-				// Update all host UIs to adapt to new terminal size
-				for _, host := range hostMonitors {
-					updateUI(host)
+		case ev := <-eventCh:
+			switch ev := ev.(type) {
+			case *tcell.EventKey:
+				if ev.Key() == tcell.KeyEscape || ev.Rune() == 'q' || ev.Key() == tcell.KeyCtrlC {
+					return
 				}
-				ui.Clear()
-				ui.Render(grid)
+			case *tcell.EventResize:
+				ui.width, ui.height = ui.screen.Size()
+				ui.screen.Sync()
 			}
 		case <-ticker.C:
-			for _, host := range hostMonitors {
-				updateUI(host)
-			}
-			ui.Render(grid)
+			ui.Clear()
+			drawUI(ui, hostMonitors)
+			ui.Show()
 		case <-ctx.Done():
 			return
 		}
+	}
+}
+
+func drawUI(ui *TerminalUI, hostMonitors []*Host) {
+	// Draw title
+	startTime := time.Now().Format("2006-01-02 15:04:05")
+	titleLines := []string{
+		" ____                 ____  _             ",
+		"|  _ \\__      ___ __ |  _ \\(_)_ __   __ _ ",
+		"| |_) \\ \\ /\\ / / '_ \\| |_) | | '_ \\ / _` |           Pinging local gateway, Google DNS, and Cloudflare DNS.",
+		"|  __/ \\ V  V /| | | |  __/| | | | | (_| |           Started at: " + startTime,
+		"|_|     \\_/\\_/ |_| |_|_|   |_|_| |_|\\__, |",
+		"                                    |___/            Press 'q' to quit.",
+	}
+
+	titleStyle := tcell.StyleDefault.Foreground(tcell.ColorTeal)
+	for i, line := range titleLines {
+		ui.DrawText(0, i, line, titleStyle)
+	}
+
+	// Calculate layout
+	titleHeight := 7
+	availableHeight := ui.height - titleHeight
+	hostHeight := availableHeight / len(hostMonitors)
+	if hostHeight < 10 {
+		hostHeight = 10
+	}
+
+	// Draw each host
+	for i, host := range hostMonitors {
+		y := titleHeight + i*hostHeight
+
+		// Calculate widths (55% graph, 25% histogram, 20% stats)
+		graphWidth := int(float64(ui.width) * 0.55)
+		histWidth := int(float64(ui.width) * 0.25)
+
+		// Draw title for this host
+		hostTitle := fmt.Sprintf("%s (%s)", host.Name, host.Address)
+		ui.DrawText(2, y, hostTitle, tcell.StyleDefault.Bold(true))
+
+		// Draw graph
+		host.mu.RLock()
+		data := make([]float64, len(host.Stats.Latencies))
+		copy(data, host.Stats.Latencies)
+		avgLatency := float64(host.Stats.AvgRTT.Milliseconds())
+
+		// Get max latency for graph title
+		maxLatency := 0.0
+		for _, lat := range data {
+			if lat > maxLatency {
+				maxLatency = lat
+			}
+		}
+		graphTitle := fmt.Sprintf("Latency - Max: %.0fms", maxLatency)
+		host.mu.RUnlock()
+
+		// Calculate widget positions without spacing
+		graphActualWidth := graphWidth
+		histX := graphActualWidth
+		histActualWidth := histWidth
+		statsX := histX + histActualWidth
+		statsActualWidth := ui.width - statsX
+
+		ui.DrawGraph(0, y+1, graphActualWidth, hostHeight-2, data, graphTitle, avgLatency)
+
+		// Draw histogram
+		host.mu.RLock()
+		histData := make([]float64, 4)
+		labels := []string{
+			fmt.Sprintf("<%dms", latencyGreatThreshold),
+			fmt.Sprintf("%d-%d", latencyGreatThreshold, latencyGoodUpperThreshold),
+			fmt.Sprintf("%d-%d", latencyGoodUpperThreshold, latencyBadUpperThreshold),
+			fmt.Sprintf(">%dms", latencyBadUpperThreshold),
+		}
+
+		if host.Stats.LifetimeCount > 0 {
+			total := float64(host.Stats.LifetimeCount)
+			for i := 0; i < 4; i++ {
+				histData[i] = math.Round((float64(host.Stats.LifetimeDistribution[i])/total)*1000) / 10
+			}
+		}
+		host.mu.RUnlock()
+
+		ui.DrawBarChart(histX, y+1, histActualWidth, hostHeight-2, histData, labels, "Distribution (%)")
+
+		// Draw stats
+		ui.DrawStats(statsX, y+1, statsActualWidth, hostHeight-2, host)
 	}
 }
 
@@ -354,139 +662,4 @@ func updateStats(stats *Stats) {
 		stdDev := math.Sqrt(variance / float64(len(stats.Latencies)))
 		stats.StdDevRTT = time.Duration(stdDev) * time.Millisecond
 	}
-}
-
-func updateUI(host *Host) {
-	host.mu.RLock()
-	defer host.mu.RUnlock()
-
-	if len(host.Stats.Latencies) > 0 {
-		// Calculate the approximate width available for the sparkline
-		// The sparkline takes 55% of terminal width (our new column ratio), minus borders and padding
-		termWidth, _ := ui.TerminalDimensions()
-		sparklineWidth := int(float64(termWidth)*0.55) - 2 // Account for borders and padding
-
-		// Only display as many data points as can fit in the available width
-		// Each data point takes approximately 1 character width
-		dataToDisplay := host.Stats.Latencies
-		if len(dataToDisplay) > sparklineWidth && sparklineWidth > 0 {
-			// Show the most recent data points that fit
-			startIdx := len(dataToDisplay) - sparklineWidth
-			dataToDisplay = dataToDisplay[startIdx:]
-		}
-
-		host.Graph.Data = dataToDisplay
-
-		// Update y-axis labels based on current data
-		maxLatency := 0.0
-		for _, lat := range host.Stats.Latencies {
-			if lat > maxLatency {
-				maxLatency = lat
-			}
-		}
-
-		host.Graph.MaxVal = maxLatency
-		host.GraphGroup.Title = fmt.Sprintf("%s (%s) - Max: %.0fms", host.Name, host.Address, maxLatency)
-
-		avgLatency := float64(host.Stats.AvgRTT.Milliseconds())
-		if avgLatency < latencyGoodThreshold {
-			host.Graph.LineColor = ui.ColorGreen
-		} else if avgLatency < latencyWarningThreshold {
-			host.Graph.LineColor = ui.ColorYellow
-		} else {
-			host.Graph.LineColor = ui.ColorRed
-		}
-
-		updateHistogram(host)
-	}
-
-	packetLoss := 0.0
-	packetsLost := 0
-	if host.Stats.PacketsSent > 0 {
-		packetsLost = host.Stats.PacketsSent - host.Stats.PacketsRecv
-		packetLoss = float64(packetsLost) / float64(host.Stats.PacketsSent) * 100
-	}
-
-	// Calculate latency distribution counts from lifetime data
-	distributionText := ""
-	if host.Stats.LifetimeCount > 0 {
-		distributionText = fmt.Sprintf("\n\nDistribution:\n<%dms: %d\n%d-%dms: %d\n%d-%dms: %d\n>%dms: %d",
-			latencyGreatThreshold, host.Stats.LifetimeDistribution[0],
-			latencyGreatThreshold, latencyGoodUpperThreshold, host.Stats.LifetimeDistribution[1],
-			latencyGoodUpperThreshold, latencyBadUpperThreshold, host.Stats.LifetimeDistribution[2],
-			latencyBadUpperThreshold, host.Stats.LifetimeDistribution[3])
-	}
-
-	// Calculate lifetime statistics
-	var lifetimeAvg, lifetimeStdDev time.Duration
-	if host.Stats.LifetimeCount > 0 {
-		avgMs := host.Stats.LifetimeSum / float64(host.Stats.LifetimeCount)
-		lifetimeAvg = time.Duration(avgMs) * time.Millisecond
-
-		// Calculate standard deviation using the formula: sqrt(E[X^2] - E[X]^2)
-		meanSquare := host.Stats.LifetimeSquareSum / float64(host.Stats.LifetimeCount)
-		variance := meanSquare - (avgMs * avgMs)
-		if variance > 0 {
-			lifetimeStdDev = time.Duration(math.Sqrt(variance)) * time.Millisecond
-		}
-	}
-
-	statsText := fmt.Sprintf(
-		"Packets: %d/%d\n"+
-			"Loss: %.1f%% (%d)\n"+
-			"Last: %v\n"+
-			"Min: %v\n"+
-			"Avg: %v\n"+
-			"Max: %v\n"+
-			"StdDev: %v%s",
-		host.Stats.PacketsRecv, host.Stats.PacketsSent,
-		packetLoss, packetsLost,
-		host.Stats.LastRTT.Round(time.Millisecond),
-		func() time.Duration {
-			if host.Stats.LifetimeMinRTT == time.Duration(math.MaxInt64) {
-				return 0
-			}
-			return host.Stats.LifetimeMinRTT.Round(time.Millisecond)
-		}(),
-		lifetimeAvg.Round(time.Millisecond),
-		host.Stats.LifetimeMaxRTT.Round(time.Millisecond),
-		lifetimeStdDev.Round(time.Millisecond),
-		distributionText,
-	)
-	host.StatsWidget.Text = statsText
-
-	if packetsLost > packetLossCriticalThreshold {
-		host.StatsWidget.BorderStyle = ui.NewStyle(ui.ColorRed)
-	} else if packetsLost > packetLossWarningThreshold {
-		host.StatsWidget.BorderStyle = ui.NewStyle(ui.ColorYellow)
-	} else {
-		host.StatsWidget.BorderStyle = ui.NewStyle(ui.ColorGreen)
-	}
-}
-
-func updateHistogram(host *Host) {
-	if host.Stats.LifetimeCount == 0 {
-		return
-	}
-
-	// Latency categories: Great (<15ms), Good (15-50ms), Bad (50-200ms), Unusable (200ms+)
-	labels := []string{
-		fmt.Sprintf("<%dms", latencyGreatThreshold),
-		fmt.Sprintf("%d-%d", latencyGreatThreshold, latencyGoodUpperThreshold),
-		fmt.Sprintf("%d-%d", latencyGoodUpperThreshold, latencyBadUpperThreshold),
-		fmt.Sprintf(">%dms", latencyBadUpperThreshold),
-	}
-	barColors := []ui.Color{ui.ColorGreen, ui.ColorYellow, ui.ColorMagenta, ui.ColorRed}
-
-	total := float64(host.Stats.LifetimeCount)
-
-	// Convert to percentages and round to 1 decimal place
-	percentages := make([]float64, 4)
-	for i, count := range host.Stats.LifetimeDistribution {
-		percentages[i] = math.Round((float64(count)/total)*1000) / 10 // Round to 1 decimal
-	}
-
-	host.Histogram.Data = percentages
-	host.Histogram.Labels = labels
-	host.Histogram.BarColors = barColors
 }
