@@ -68,7 +68,8 @@ var (
 		{"8.8.8.8", "Google DNS"},
 		{"1.1.1.1", "Cloudflare DNS"},
 	}
-	maxDataPoints = 100
+	maxDataPoints    = 100
+	programStartTime time.Time
 )
 
 // Terminal UI using tcell
@@ -386,6 +387,9 @@ func main() {
 
 	log.Println("Starting pwnping...")
 
+	// Record program start time
+	programStartTime = time.Now()
+
 	// Initialize terminal UI
 	ui, err := NewTerminalUI()
 	if err != nil {
@@ -479,12 +483,13 @@ func main() {
 
 func drawUI(ui *TerminalUI, hostMonitors []*Host) {
 	// Draw title
-	startTime := time.Now().Format("2006-01-02 15:04:05")
+	duration := time.Since(programStartTime)
+	durationStr := formatDuration(duration)
 	titleLines := []string{
 		" ____                 ____  _             ",
 		"|  _ \\__      ___ __ |  _ \\(_)_ __   __ _ ",
 		"| |_) \\ \\ /\\ / / '_ \\| |_) | | '_ \\ / _` |           Pinging local gateway, Google DNS, and Cloudflare DNS.",
-		"|  __/ \\ V  V /| | | |  __/| | | | | (_| |           Started at: " + startTime,
+		"|  __/ \\ V  V /| | | |  __/| | | | | (_| |           Duration: " + durationStr,
 		"|_|     \\_/\\_/ |_| |_|_|   |_|_| |_|\\__, |",
 		"                                    |___/            Press 'q' to quit.",
 	}
@@ -677,5 +682,19 @@ func updateStats(stats *Stats) {
 		}
 		stdDev := math.Sqrt(variance / float64(len(stats.Latencies)))
 		stats.StdDevRTT = time.Duration(stdDev) * time.Millisecond
+	}
+}
+
+func formatDuration(d time.Duration) string {
+	hours := int(d.Hours())
+	minutes := int(d.Minutes()) % 60
+	seconds := int(d.Seconds()) % 60
+
+	if hours > 0 {
+		return fmt.Sprintf("%dh %dm %ds", hours, minutes, seconds)
+	} else if minutes > 0 {
+		return fmt.Sprintf("%dm %ds", minutes, seconds)
+	} else {
+		return fmt.Sprintf("%ds", seconds)
 	}
 }
