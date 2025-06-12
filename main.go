@@ -147,7 +147,8 @@ func (ui *TerminalUI) DrawBox(x, y, w, h int, title string, borderStyle tcell.St
 	}
 }
 
-func (ui *TerminalUI) DrawGraph(x, y, width, height int, data []float64, title string, avgLatency float64) {
+func (ui *TerminalUI) DrawGraph(x, y, width, height int, data []float64, title string, avgLatency float64, maxLatency float64) {
+	const dx = 7
 	// Determine border color based on average latency
 	borderStyle := tcell.StyleDefault.Foreground(tcell.ColorGreen)
 	if avgLatency >= latencyWarningThreshold {
@@ -163,17 +164,23 @@ func (ui *TerminalUI) DrawGraph(x, y, width, height int, data []float64, title s
 		return
 	}
 
+	if width-dx < 0 {
+		return
+	}
+
 	// Adjust data to fit width
 	displayData := data
-	if len(data) > width-2 {
-		displayData = data[len(data)-(width-2):]
+	if len(data) > width-dx {
+		displayData = data[len(data)-(width-dx):]
 	}
 
 	// Generate graph using asciigraph
 	graph := asciigraph.Plot(displayData,
 		asciigraph.Height(height-2), // Account for box borders
-		asciigraph.Width(width-8),
+		asciigraph.Width(width-dx),
 		asciigraph.LowerBound(0), // Always start y-axis from 0
+		asciigraph.UpperBound(maxLatency),
+		asciigraph.Precision(1),
 	)
 
 	// Draw graph inside box
@@ -523,7 +530,7 @@ func drawUI(ui *TerminalUI, hostMonitors []*Host) {
 		statsX := histX + histActualWidth
 		statsActualWidth := ui.width - statsX
 
-		ui.DrawGraph(0, y+1, graphActualWidth, hostHeight-2, data, graphTitle, avgLatency)
+		ui.DrawGraph(0, y+1, graphActualWidth, hostHeight-2, data, graphTitle, avgLatency, maxLatency)
 
 		// Draw histogram
 		host.mu.RLock()
