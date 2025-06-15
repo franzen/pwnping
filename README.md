@@ -176,7 +176,7 @@ MIT License
 - Built with [tcell](https://github.com/gdamore/tcell) for terminal manipulation with true double buffering
 - Uses [asciigraph](https://github.com/guptarohit/asciigraph) for beautiful ASCII line graphs
 - Uses [pro-bing](https://github.com/prometheus-community/pro-bing) for ICMP operations
-- Vibe-coded with [claude cli](claude.ai/code)
+- Vibe-coded with [claude cli](https://claude.ai/code)
 - Inspired by countless hours of internet outages and ISP support calls
 
 ---
